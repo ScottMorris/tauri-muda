@@ -70,6 +70,45 @@ pub enum Error {
     ))]
     #[error("Unsupported GTK container type")]
     UnsupportedGtkContainer,
+    #[cfg(all(
+        any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ),
+        feature = "gtk3",
+        not(feature = "gtk4")
+    ))]
+    #[error("The GTK CSS could not be parsed: {0}")]
+    InvalidGtkCss(String),
+    #[cfg(all(
+        any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ),
+        feature = "gtk3",
+        not(feature = "gtk4")
+    ))]
+    #[error("`{0}` is not a valid GTK CSS class name")]
+    InvalidGtkCssClass(String),
+    #[cfg(all(
+        any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ),
+        feature = "gtk3",
+        not(feature = "gtk4")
+    ))]
+    #[error("GTK has no default screen; initialise GTK before styling menus")]
+    GtkStyleUnavailable,
 }
 
 /// Convenient type alias of Result type for muda.

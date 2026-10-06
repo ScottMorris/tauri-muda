@@ -189,6 +189,11 @@ pub(crate) struct PlatformMenuItem {
     accelerator_tables: HashMap<u32, AcceleratorTableRef>,
     accel: Option<ACCEL>,
     hbitmap: Option<Owned<HBITMAP>>,
+    /// The icon the bitmap was made from, the size it was asked for (before the crate default),
+    /// and the DPI it was made for (`0` until first built), so it can be rebuilt for another DPI.
+    icon: Option<IconType>,
+    icon_size: Option<u32>,
+    icon_dpi: u32,
     subclassed_windows: RefCell<HashSet<Hwnd>>,
     // submenu fields
     hmenu: HMENU,
@@ -356,6 +361,7 @@ impl PlatformMenu {
         hwnd: isize,
         position: Option<Position>,
     ) -> Option<Rc<RefCell<PlatformMenuItem>>> {
+        refresh_icon_dpi(&self.children, util::hwnd_dpi(hwnd as _));
         show_context_menu(hwnd as _, self.hpopupmenu, position).and_then(|id| self.find_by_id(id))
     }
 
@@ -436,6 +442,9 @@ impl PlatformMenuItem {
             accelerator_tables: HashMap::new(),
             accel: None,
             hbitmap: None,
+            icon: None,
+            icon_size: None,
+            icon_dpi: 0,
             subclassed_windows: RefCell::new(HashSet::new()),
             hmenu: std::ptr::null_mut(),
             hpopupmenu: std::ptr::null_mut(),
@@ -451,6 +460,9 @@ impl PlatformMenuItem {
             accelerator_tables: HashMap::new(),
             accel: None,
             hbitmap: None,
+            icon: None,
+            icon_size: None,
+            icon_dpi: 0,
             subclassed_windows: RefCell::new(HashSet::new()),
             hmenu: unsafe { CreateMenu() },
             hpopupmenu: unsafe { CreatePopupMenu() },
@@ -612,6 +624,11 @@ impl PlatformMenuItem {
 /// Icons
 impl PlatformMenuItem {
     pub fn set_icon(&mut self, icon: Option<&IconType>) {
+        self.icon = icon.cloned();
+        if self.icon_dpi == 0 {
+            self.icon_dpi = unsafe { util::system_dpi() };
+        }
+
         let hbitmap = self.create_hbitmap(icon);
         let info = create_icon_item_info(hbitmap.as_deref().copied());
 
@@ -623,14 +640,64 @@ impl PlatformMenuItem {
         self.redraw_menu_bars();
     }
 
+    pub fn set_icon_size(&mut self, size: Option<u32>, icon: Option<&IconType>) {
+        self.icon_size = size;
+        if icon.is_some() {
+            self.set_icon(icon);
+        }
+    }
+
+    /// The physical size the icon is drawn at for `self.icon_dpi`, or `None` for the legacy size.
+    fn icon_pixel_size(&self) -> Option<u32> {
+        crate::menu_icon::effective_icon_size(self.icon_size).map(|logical| {
+            crate::menu_icon::physical_size(logical, util::dpi_to_scale_factor(self.icon_dpi))
+        })
+    }
+
     fn create_hbitmap(&self, icon: Option<&IconType>) -> Option<Owned<HBITMAP>> {
-        let hbitmap = match icon {
-            Some(IconType::Custom(icon)) => unsafe { icon.inner.to_hbitmap() },
-            Some(IconType::Native(icon)) => native_icon_hbitmap(icon),
-            None => std::ptr::null_mut(),
+        let size = self.icon_pixel_size();
+        let hbitmap = match (icon, size) {
+            (Some(IconType::Custom(icon)), Some(size)) => unsafe {
+                icon.inner.to_hbitmap_sized(size)
+            },
+            (Some(IconType::Custom(icon)), None) => unsafe { icon.inner.to_hbitmap() },
+            (Some(IconType::Native(icon)), size) => native_icon_hbitmap(icon, size),
+            (None, _) => std::ptr::null_mut(),
         };
 
         (!hbitmap.is_null()).then(|| unsafe { Owned::new(hbitmap) })
+    }
+
+    /// Rebuilds the icon for `dpi` when it was made for another one and has a requested size.
+    fn refresh_icon_dpi(&mut self, dpi: u32) {
+        if let Some(children) = &self.children {
+            refresh_icon_dpi(children, dpi);
+        }
+
+        if self.icon.is_none()
+            || self.icon_dpi == dpi
+            || crate::menu_icon::effective_icon_size(self.icon_size).is_none()
+        {
+            return;
+        }
+
+        self.icon_dpi = dpi;
+        let hbitmap = self.create_hbitmap(self.icon.as_ref());
+        let info = create_icon_item_info(hbitmap.as_deref().copied());
+        for parent in &self.parents {
+            unsafe { SetMenuItemInfoW(parent.hmenu, self.id(), FALSE, &info) };
+        }
+        self.hbitmap = hbitmap;
+    }
+}
+
+/// Makes the icons of `items` (and of their submenus) match `dpi`, so a menu about to be shown
+/// for a window on another monitor does not use bitmaps sized for a different one.
+fn refresh_icon_dpi(items: &[Rc<RefCell<PlatformMenuItem>>], dpi: u32) {
+    for item in items {
+        if let Ok(mut item) = item.try_borrow_mut() {
+            item.refresh_icon_dpi(dpi);
+        }
     }
 }
 
@@ -688,6 +755,10 @@ impl PlatformMenuItem {
         hwnd: isize,
         position: Option<Position>,
     ) -> Option<Rc<RefCell<PlatformMenuItem>>> {
+        refresh_icon_dpi(
+            self.children.as_deref().unwrap_or_default(),
+            util::hwnd_dpi(hwnd as _),
+        );
         show_context_menu(hwnd as _, self.hpopupmenu, position).and_then(|id| self.find_by_id(id))
     }
 
@@ -764,6 +835,11 @@ fn attach_item(
     }
 
     if args.icon.is_some() {
+        child.icon = args.icon.clone();
+        child.icon_size = args.icon_size;
+        if child.icon_dpi == 0 {
+            child.icon_dpi = unsafe { util::system_dpi() };
+        }
         if child.hbitmap.is_none() {
             child.hbitmap = child.create_hbitmap(args.icon.as_ref());
         }
@@ -943,7 +1019,7 @@ fn create_icon_item_info(hbitmap: Option<HBITMAP>) -> MENUITEMINFOW {
     info
 }
 
-fn native_icon_hbitmap(icon: &NativeIcon) -> HBITMAP {
+fn native_icon_hbitmap(icon: &NativeIcon, size: Option<u32>) -> HBITMAP {
     // Translate the public native icon to the shell stock icon ID expected by
     // SHGetStockIconInfo. Unsupported variants deliberately render as no icon.
     let Some(icon_id) = stock_icon_id(icon) else {
@@ -955,14 +1031,23 @@ fn native_icon_hbitmap(icon: &NativeIcon) -> HBITMAP {
         ..Default::default()
     };
 
-    let result = unsafe { SHGetStockIconInfo(icon_id, SHGSI_ICON | SHGSI_SMALLICON, &mut info) };
+    // The small shell icon is only worth asking for when it is at least as large as the target;
+    // otherwise the large one is scaled down instead of the small one being scaled up.
+    let flags = match size {
+        Some(size) if size > unsafe { GetSystemMetrics(SM_CXSMICON) } as u32 => SHGSI_ICON,
+        _ => SHGSI_ICON | SHGSI_SMALLICON,
+    };
+    let result = unsafe { SHGetStockIconInfo(icon_id, flags, &mut info) };
 
     if result < 0 || info.hIcon.is_null() {
         return std::ptr::null_mut();
     }
 
     let icon = PlatformIcon::from_handle(info.hIcon);
-    unsafe { icon.to_hbitmap() }
+    match size {
+        Some(size) => unsafe { icon.to_hbitmap_sized(size) },
+        None => unsafe { icon.to_hbitmap() },
+    }
 }
 
 fn stock_icon_id(icon: &NativeIcon) -> Option<SHSTOCKICONID> {

@@ -2,9 +2,9 @@
 // Copyright 2021-2022 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 
-use gtk::gdk_pixbuf::{Colorspace, Pixbuf};
+use gtk::gdk_pixbuf::{Colorspace, InterpType, Pixbuf};
 
-use crate::icon::BadIcon;
+use crate::{icon::BadIcon, menu_icon::fit_within};
 
 /// An icon used for the window titlebar, taskbar, etc.
 #[derive(Debug, Clone)]
@@ -57,9 +57,44 @@ impl PlatformIcon {
         )
     }
 
-    pub fn to_pixbuf_scale(&self, w: i32, h: i32) -> Pixbuf {
-        self.to_pixbuf()
-            .scale_simple(w, h, gtk::gdk_pixbuf::InterpType::Bilinear)
-            .unwrap()
+    /// Renders the icon into a transparent `size` x `size` pixbuf, scaled to fit without
+    /// distorting its aspect ratio and centred.
+    pub fn to_pixbuf_fitted(&self, size: i32) -> Pixbuf {
+        let size = size.max(1);
+        let source = self.to_pixbuf();
+        let (width, height) = fit_within(self.width as u32, self.height as u32, size as u32);
+        let (width, height) = (width as i32, height as i32);
+
+        let interp = if width < self.width || height < self.height {
+            InterpType::Hyper
+        } else {
+            InterpType::Bilinear
+        };
+        let fitted = if (width, height) == (self.width, self.height) {
+            source
+        } else {
+            source.scale_simple(width, height, interp).unwrap_or(source)
+        };
+
+        if (width, height) == (size, size) {
+            return fitted;
+        }
+
+        match Pixbuf::new(Colorspace::Rgb, true, 8, size, size) {
+            Some(canvas) => {
+                canvas.fill(0);
+                fitted.copy_area(
+                    0,
+                    0,
+                    width,
+                    height,
+                    &canvas,
+                    (size - width) / 2,
+                    (size - height) / 2,
+                );
+                canvas
+            }
+            None => fitted,
+        }
     }
 }

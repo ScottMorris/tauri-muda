@@ -18,6 +18,7 @@ pub struct IconMenuItemBuilder {
     icon: Option<Icon>,
     native_icon: Option<NativeIcon>,
     styled_text: Option<Vec<(String, TextStyle)>>,
+    icon_size: Option<u32>,
 }
 
 impl Default for IconMenuItemBuilder {
@@ -30,6 +31,7 @@ impl Default for IconMenuItemBuilder {
             icon: None,
             native_icon: None,
             styled_text: None,
+            icon_size: None,
         }
     }
 }
@@ -63,6 +65,14 @@ impl IconMenuItemBuilder {
     pub fn icon(mut self, icon: Option<Icon>) -> Self {
         self.icon = icon;
         self.native_icon = None;
+        self
+    }
+
+    /// Set the logical size, in pixels, at which this icon menu item's icon is drawn.
+    ///
+    /// See [`IconMenuItem::set_icon_size`] for more info.
+    pub fn icon_size(mut self, size: Option<u32>) -> Self {
+        self.icon_size = size;
         self
     }
 
@@ -172,6 +182,10 @@ impl IconMenuItemBuilder {
 
         if let Some(parts) = self.styled_text {
             item.set_styled_text(parts);
+        }
+
+        if self.icon_size.is_some() {
+            item.set_icon_size(self.icon_size);
         }
 
         item

@@ -1159,6 +1159,9 @@ impl PlatformMenuItem {
     pub fn set_icon(&mut self, icon: Option<&IconType>) {
         self.for_each_custom_widget(|widget| widget.set_icon(icon));
     }
+
+    /// Menu icon sizes are not configurable with GTK 4.
+    pub fn set_icon_size(&mut self, _size: Option<u32>, _icon: Option<&IconType>) {}
 }
 
 impl MenuItemKind {

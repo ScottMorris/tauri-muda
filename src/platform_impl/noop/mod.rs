@@ -81,6 +81,8 @@ impl PlatformMenuItem {
 
     pub(crate) fn set_icon(&mut self, _icon: Option<&IconType>) {}
 
+    pub(crate) fn set_icon_size(&mut self, _size: Option<u32>, _icon: Option<&IconType>) {}
+
     pub(crate) fn attach(&mut self, _child: &MenuItemKind, _op: AddOp) -> crate::Result<()> {
         Ok(())
     }

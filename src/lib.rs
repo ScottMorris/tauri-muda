@@ -243,6 +243,7 @@ mod error;
 mod icon;
 mod items;
 mod menu_event;
+mod menu_icon;
 mod menu_id;
 mod platform_impl;
 mod sealed;
@@ -250,6 +251,53 @@ mod sealed;
 mod snapshot;
 mod state_cell;
 mod util;
+
+/// Styling for the menus muda builds with GTK 3.
+///
+/// muda creates ordinary `GtkMenu` widgets, so an application can theme them with CSS the same
+/// way it would theme any GTK widget. Two things are needed: the CSS itself, installed for the
+/// whole screen with [`set_css`], and a style class that scopes it to muda's menus, set with
+/// [`set_menu_css_class`] and added to every popup menu and submenu muda creates after the call.
+/// Set the class before building menus; menus that already exist keep the classes they were
+/// created with.
+///
+/// ```no_run
+/// # fn main() -> muda::Result<()> {
+/// gtk::init().unwrap();
+///
+/// muda::gtk_style::set_menu_css_class(Some("my-app-menu"))?;
+/// muda::gtk_style::set_css(
+///     "menu.my-app-menu { background: #202124; border-radius: 8px; padding: 4px; }
+///      menu.my-app-menu menuitem { color: #e8eaed; border-radius: 4px; padding: 4px 8px; }
+///      menu.my-app-menu menuitem:hover { background: #3c4043; }",
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// CSS is installed at `GTK_STYLE_PROVIDER_PRIORITY_APPLICATION`, above the theme and below user
+/// overrides. Invalid CSS is reported as [`Error::InvalidGtkCss`] and leaves the previously
+/// installed CSS in place. muda itself gives each item's content box a negative left margin so
+/// that icons line up with the theme's menu padding; that margin is not part of the styling
+/// surface, so style the `menu`, `menuitem` and `image` nodes instead.
+///
+/// ## Platform-specific
+///
+/// Only available with the `gtk3` feature, and not when `gtk4` is also enabled.
+#[cfg(all(
+    any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ),
+    feature = "gtk3",
+    not(feature = "gtk4")
+))]
+pub mod gtk_style {
+    pub use crate::platform_impl::style::{clear_css, menu_css_class, set_css, set_menu_css_class};
+}
 
 pub use about_metadata::AboutMetadata;
 pub use builders::*;
@@ -259,6 +307,7 @@ pub use error::*;
 pub use icon::{BadIcon, Icon, NativeIcon};
 pub use items::*;
 pub use menu_event::{MenuEvent, MenuEventReceiver};
+pub use menu_icon::{default_menu_icon_size, set_default_menu_icon_size};
 pub use menu_id::MenuId;
 #[cfg(feature = "snapshot")]
 pub use snapshot::*;

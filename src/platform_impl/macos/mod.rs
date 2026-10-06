@@ -377,6 +377,9 @@ impl PlatformMenuItem {
             }
         }
     }
+
+    /// AppKit sizes menu images itself, so the requested size is ignored.
+    pub fn set_icon_size(&mut self, _size: Option<u32>, _icon: Option<&IconType>) {}
 }
 
 fn remove_children_instances_for_parent(parent_id: u32, children: &[MenuItemKind]) {

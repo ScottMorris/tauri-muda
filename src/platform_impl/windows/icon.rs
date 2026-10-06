@@ -8,10 +8,10 @@ use std::{fmt, io, mem, path::Path, sync::Arc};
 
 use windows_sys::{
     core::PCWSTR,
-    Win32::{Foundation::RECT, Graphics::Gdi::*, UI::WindowsAndMessaging::*},
+    Win32::{Graphics::Gdi::*, UI::WindowsAndMessaging::*},
 };
 
-use crate::icon::*;
+use crate::{icon::*, menu_icon::menu_bitmap_bgra};
 
 use super::util;
 
@@ -23,6 +23,11 @@ impl Pixel {
 
 impl RgbaIcon {
     fn into_windows_icon(self) -> Result<WinIcon, BadIcon> {
+        let source = Arc::new(RgbaIcon {
+            rgba: self.rgba.clone(),
+            width: self.width,
+            height: self.height,
+        });
         let rgba = self.rgba;
         let pixel_count = rgba.len() / PIXEL_SIZE;
         let mut and_mask = Vec::with_capacity(pixel_count);
@@ -45,7 +50,10 @@ impl RgbaIcon {
             )
         };
         if !handle.is_null() {
-            Ok(WinIcon::from_handle(handle))
+            Ok(WinIcon {
+                rgba: Some(source),
+                ..WinIcon::from_handle(handle)
+            })
         } else {
             Err(BadIcon::OsError(io::Error::last_os_error()))
         }
@@ -60,41 +68,47 @@ struct RaiiIcon {
 #[derive(Clone)]
 pub(crate) struct WinIcon {
     inner: Arc<RaiiIcon>,
+    /// The straight-alpha pixels the icon was created from, when it was created from pixels.
+    rgba: Option<Arc<RgbaIcon>>,
 }
 
 unsafe impl Send for WinIcon {}
 
 impl WinIcon {
+    /// Draws the icon into a 16 x 16 menu bitmap.
     pub unsafe fn to_hbitmap(&self) -> HBITMAP {
-        let hdc = CreateCompatibleDC(std::ptr::null_mut());
+        self.draw_hbitmap(16)
+    }
 
-        let rc = RECT {
-            left: 0,
-            top: 0,
-            right: 16,
-            bottom: 16,
+    /// Creates a `size` x `size` pixel menu bitmap. Icons made from pixels are resampled and
+    /// premultiplied here; any other icon is drawn by the system at that size.
+    pub unsafe fn to_hbitmap_sized(&self, size: u32) -> HBITMAP {
+        let Some(source) = &self.rgba else {
+            return self.draw_hbitmap(size as i32);
         };
 
-        let mut bitmap_info: BITMAPINFO = std::mem::zeroed();
-        bitmap_info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as _;
-        bitmap_info.bmiHeader.biWidth = rc.right;
-        bitmap_info.bmiHeader.biHeight = rc.bottom;
-        bitmap_info.bmiHeader.biPlanes = 1;
-        bitmap_info.bmiHeader.biBitCount = 32;
-        bitmap_info.bmiHeader.biCompression = BI_RGB as _;
+        let pixels = menu_bitmap_bgra(&source.rgba, source.width, source.height, size);
+        let mut bits = std::ptr::null_mut();
+        let hbitmap = create_dib_section(size as i32, &mut bits);
+        if !hbitmap.is_null() && !bits.is_null() {
+            // A bottom-up DIB stores its last row first.
+            let row_len = size as usize * 4;
+            let dib = std::slice::from_raw_parts_mut(bits as *mut u8, pixels.len());
+            for (row, dib_row) in pixels
+                .chunks_exact(row_len)
+                .zip(dib.chunks_exact_mut(row_len).rev())
+            {
+                dib_row.copy_from_slice(row);
+            }
+        }
+        hbitmap
+    }
 
-        let h_dc_bitmap = GetDC(std::ptr::null_mut());
+    unsafe fn draw_hbitmap(&self, size: i32) -> HBITMAP {
+        let hdc = CreateCompatibleDC(std::ptr::null_mut());
 
-        let hbitmap = CreateDIBSection(
-            h_dc_bitmap,
-            &bitmap_info,
-            DIB_RGB_COLORS,
-            0 as _,
-            std::ptr::null_mut(),
-            0,
-        );
-
-        ReleaseDC(std::ptr::null_mut(), h_dc_bitmap);
+        let mut bits = std::ptr::null_mut();
+        let hbitmap = create_dib_section(size, &mut bits);
 
         let h_bitmap_old = SelectObject(hdc, hbitmap);
 
@@ -103,8 +117,8 @@ impl WinIcon {
             0,
             0,
             self.inner.handle,
-            rc.right,
-            rc.bottom,
+            size,
+            size,
             0,
             std::ptr::null_mut(),
             DI_NORMAL,
@@ -117,14 +131,14 @@ impl WinIcon {
     }
 
     pub fn from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> Result<Self, BadIcon> {
-        let rgba_icon = RgbaIcon::from_rgba(rgba, width, height)?;
-        rgba_icon.into_windows_icon()
+        RgbaIcon::from_rgba(rgba, width, height)?.into_windows_icon()
     }
 
     pub(crate) fn from_handle(handle: HICON) -> Self {
         Self {
             #[allow(clippy::arc_with_non_send_sync)]
             inner: Arc::new(RaiiIcon { handle }),
+            rgba: None,
         }
     }
 
@@ -188,4 +202,29 @@ impl fmt::Debug for WinIcon {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         (*self.inner).fmt(formatter)
     }
+}
+
+/// Creates a bottom-up 32-bit DIB section of `size` x `size` pixels and returns where its pixels
+/// live in `bits`.
+unsafe fn create_dib_section(size: i32, bits: &mut *mut std::ffi::c_void) -> HBITMAP {
+    let mut bitmap_info: BITMAPINFO = std::mem::zeroed();
+    bitmap_info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as _;
+    bitmap_info.bmiHeader.biWidth = size;
+    bitmap_info.bmiHeader.biHeight = size;
+    bitmap_info.bmiHeader.biPlanes = 1;
+    bitmap_info.bmiHeader.biBitCount = 32;
+    bitmap_info.bmiHeader.biCompression = BI_RGB as _;
+
+    let h_dc_bitmap = GetDC(std::ptr::null_mut());
+    let hbitmap = CreateDIBSection(
+        h_dc_bitmap,
+        &bitmap_info,
+        DIB_RGB_COLORS,
+        bits,
+        std::ptr::null_mut(),
+        0,
+    );
+    ReleaseDC(std::ptr::null_mut(), h_dc_bitmap);
+
+    hbitmap
 }

@@ -87,6 +87,9 @@ pub(crate) struct PlatformAttachArgs {
     pub checked: bool,
     pub accelerator: Option<MenuAccelerator>,
     pub icon: Option<IconType>,
+    /// The item's own icon size; the crate-wide default is applied by the backend.
+    #[allow(dead_code)]
+    pub icon_size: Option<u32>,
     #[cfg(target_os = "macos")]
     pub styled_text: Option<Vec<(String, TextStyle)>>,
 }
@@ -102,6 +105,7 @@ impl MenuItemKind {
                     checked: false,
                     accelerator: state.accelerator.clone(),
                     icon: None,
+                    icon_size: None,
                     #[cfg(target_os = "macos")]
                     styled_text: state.styled_text.clone(),
                 }
@@ -114,6 +118,7 @@ impl MenuItemKind {
                     checked: false,
                     accelerator: None,
                     icon: state.icon.clone(),
+                    icon_size: None,
                     #[cfg(target_os = "macos")]
                     styled_text: state.styled_text.clone(),
                 }
@@ -126,6 +131,7 @@ impl MenuItemKind {
                     checked: false,
                     accelerator: state.predefined_item_type.accelerator(),
                     icon: None,
+                    icon_size: None,
                     #[cfg(target_os = "macos")]
                     styled_text: None,
                 }
@@ -138,6 +144,7 @@ impl MenuItemKind {
                     checked: state.checked,
                     accelerator: state.accelerator.clone(),
                     icon: None,
+                    icon_size: None,
                     #[cfg(target_os = "macos")]
                     styled_text: state.styled_text.clone(),
                 }
@@ -150,6 +157,7 @@ impl MenuItemKind {
                     checked: false,
                     accelerator: state.accelerator.clone(),
                     icon: state.icon.clone(),
+                    icon_size: state.icon_size,
                     #[cfg(target_os = "macos")]
                     styled_text: state.styled_text.clone(),
                 }

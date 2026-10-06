@@ -4,6 +4,7 @@
 
 mod icon;
 mod mnemonic;
+pub(crate) mod style;
 
 pub(crate) use icon::PlatformIcon;
 
@@ -16,7 +17,12 @@ use crate::{
     MenuEvent, MenuItemAction, MenuItemKind,
 };
 use glib::translate::ToGlibPtr;
-use gtk::{gdk, glib, prelude::*, AboutDialog, Container, Orientation};
+use gtk::{
+    gdk::{self, prelude::GdkPixbufExt},
+    glib,
+    prelude::*,
+    AboutDialog, Container, Orientation,
+};
 use mnemonic::{from_gtk_mnemonic, to_gtk_mnemonic};
 use std::{
     cell::RefCell,
@@ -269,7 +275,7 @@ impl PlatformMenu {
         let mut add_items = false;
 
         if self.gtk_menu.1.is_none() {
-            self.gtk_menu.1 = Some(gtk::Menu::new());
+            self.gtk_menu.1 = Some(style::new_menu());
             add_items = true;
         }
 
@@ -294,6 +300,9 @@ pub struct PlatformMenuItem {
     // menu item fields
     gtk_accelerator: Option<(gdk::ModifierType, u32)>,
     is_syncing: Option<Rc<AtomicBool>>,
+
+    // icon item fields
+    icon_size: Option<u32>,
 
     // submenu fields
     gtk_menus: Option<HashMap<u32, Vec<(u32, gtk::Menu)>>>,
@@ -352,6 +361,7 @@ impl PlatformMenuItem {
             gtk_menu: None,
             gtk_menus: None,
             is_syncing,
+            icon_size: None,
         }
     }
 
@@ -535,27 +545,102 @@ impl PlatformMenuItem {
     }
 }
 
+/// Rendering state kept on an icon item's `GtkImage` so that it can be redrawn when the scale
+/// factor of the screen it is shown on changes.
+#[derive(Clone)]
+struct IconRender {
+    icon: PlatformIcon,
+    size: i32,
+    scale: i32,
+}
+
+const ICON_RENDER_KEY: &str = "muda-icon-render";
+
+/// The logical size menu icons have always been drawn at.
+const DEFAULT_ICON_SIZE: u32 = 16;
+
 /// IconMenuItem methods
 impl PlatformMenuItem {
-    fn icon_image(icon: Option<&IconType>) -> Option<gtk::Image> {
-        if let Some(IconType::Custom(icon)) = icon {
-            let icon = icon.inner.to_pixbuf_scale(16, 16);
-            Some(gtk::Image::from_pixbuf(Some(&icon)))
-        } else {
-            let IconType::Native(icon) = icon? else {
-                return None;
-            };
-            let icon_name = icon.freedesktop_name();
-            let image = gtk::Image::from_icon_name(Some(icon_name), gtk::IconSize::Menu);
-            Some(image)
+    /// Creates the image widget of an icon item, showing `icon` if there is one.
+    fn new_icon_image(icon: Option<&IconType>, size: Option<u32>) -> gtk::Image {
+        let image = gtk::Image::new();
+        image.connect_scale_factor_notify(Self::refresh_icon_scale);
+        image.connect_realize(Self::refresh_icon_scale);
+        image.connect_map(Self::refresh_icon_scale);
+        Self::apply_icon(&image, icon, size);
+        image
+    }
+
+    fn apply_icon(image: &gtk::Image, icon: Option<&IconType>, size: Option<u32>) {
+        let size = crate::menu_icon::effective_icon_size(size);
+        match icon {
+            Some(IconType::Custom(icon)) => {
+                image.set_pixel_size(-1);
+                let size = size.unwrap_or(DEFAULT_ICON_SIZE) as i32;
+                Self::render_icon(image, &icon.inner, size);
+            }
+            Some(IconType::Native(icon)) => {
+                Self::forget_icon_render(image);
+                image.set_from_icon_name(Some(icon.freedesktop_name()), gtk::IconSize::Menu);
+                image.set_pixel_size(size.map_or(-1, |size| size as i32));
+            }
+            None => {
+                Self::forget_icon_render(image);
+                image.clear();
+            }
+        }
+    }
+
+    /// Draws a custom icon as a surface of `size * scale` pixels tagged with the widget's scale
+    /// factor, which GTK displays `size` logical pixels wide and without resampling.
+    fn render_icon(image: &gtk::Image, icon: &PlatformIcon, size: i32) {
+        let scale = image.scale_factor().max(1);
+        let pixbuf = icon.to_pixbuf_fitted(size * scale);
+
+        match pixbuf.create_surface(scale, image.window().as_ref()) {
+            Some(surface) => image.set_from_surface(Some(&surface)),
+            None => image.set_from_pixbuf(Some(&pixbuf)),
+        }
+
+        // SAFETY: the key is only ever used with the `IconRender` type.
+        unsafe {
+            image.set_data(
+                ICON_RENDER_KEY,
+                IconRender {
+                    icon: icon.clone(),
+                    size,
+                    scale,
+                },
+            );
+        }
+    }
+
+    fn forget_icon_render(image: &gtk::Image) {
+        // SAFETY: the key is only ever used with the `IconRender` type.
+        unsafe {
+            let _ = image.steal_data::<IconRender>(ICON_RENDER_KEY);
+        }
+    }
+
+    /// Redraws a custom icon if the widget is now shown at a different scale factor than the
+    /// one it was last drawn for.
+    fn refresh_icon_scale(image: &gtk::Image) {
+        // SAFETY: the key is only ever used with the `IconRender` type.
+        let render = unsafe {
+            image
+                .data::<IconRender>(ICON_RENDER_KEY)
+                .map(|render| render.as_ref().clone())
+        };
+
+        if let Some(render) = render {
+            if render.scale != image.scale_factor().max(1) {
+                Self::render_icon(image, &render.icon, render.size);
+            }
         }
     }
 
     pub fn set_icon(&mut self, icon: Option<&IconType>) {
-        let pixbuf = icon.and_then(|icon| match icon {
-            IconType::Custom(icon) => Some(icon.inner.to_pixbuf_scale(16, 16)),
-            _ => None,
-        });
+        let size = self.icon_size;
 
         for items in self.gtk_menu_items.borrow().values() {
             for i in items {
@@ -568,19 +653,35 @@ impl PlatformMenuItem {
                     .first()
                     .and_then(|c| c.downcast_ref::<gtk::Image>())
                 {
-                    if let Some(pixbuf) = pixbuf.as_ref() {
-                        image.set_pixbuf(Some(pixbuf));
-                    } else if let Some(IconType::Native(native_icon)) = icon {
-                        let native_icon = native_icon.freedesktop_name();
-                        image.set_from_icon_name(Some(native_icon), gtk::IconSize::Menu);
+                    if icon.is_some() {
+                        Self::apply_icon(image, icon, size);
                     } else {
                         box_container.remove(image);
                     }
-                } else if let Some(image) = Self::icon_image(icon) {
+                } else if icon.is_some() {
                     // No image widget exists yet, but we're setting an icon, so create one
+                    let image = Self::new_icon_image(icon, size);
                     box_container.pack_start(&image, false, false, 0);
                     box_container.reorder_child(&image, 0);
                     image.show();
+                }
+            }
+        }
+    }
+
+    pub fn set_icon_size(&mut self, size: Option<u32>, icon: Option<&IconType>) {
+        self.icon_size = size;
+
+        for items in self.gtk_menu_items.borrow().values() {
+            for i in items {
+                let box_container = i.child().unwrap().downcast::<gtk::Box>().unwrap();
+                let children = box_container.children();
+
+                if let Some(image) = children
+                    .first()
+                    .and_then(|c| c.downcast_ref::<gtk::Image>())
+                {
+                    Self::apply_icon(image, icon, size);
                 }
             }
         }
@@ -648,7 +749,7 @@ impl PlatformMenuItem {
         {
             let gtk_menu = self.gtk_menu.as_mut().unwrap();
             if gtk_menu.1.is_none() {
-                gtk_menu.1 = Some(gtk::Menu::new());
+                gtk_menu.1 = Some(style::new_menu());
                 add_items = true;
             }
         }
@@ -754,9 +855,9 @@ impl PlatformMenuItem {
         add_to_cache: bool,
         for_menu_bar: bool,
     ) -> crate::Result<gtk::MenuItem> {
-        let submenu = gtk::Menu::new();
+        let submenu = style::new_menu();
 
-        let image = Self::icon_image(args.icon.as_ref()).unwrap_or_default();
+        let image = Self::new_icon_image(args.icon.as_ref(), args.icon_size);
 
         let label = gtk::AccelLabel::builder()
             .label(to_gtk_mnemonic(&args.text))
@@ -1002,7 +1103,7 @@ impl PlatformMenuItem {
         add_to_cache: bool,
         for_menu_bar: bool,
     ) -> crate::Result<gtk::MenuItem> {
-        let image = Self::icon_image(args.icon.as_ref()).unwrap_or_default();
+        let image = Self::new_icon_image(args.icon.as_ref(), args.icon_size);
 
         let label = gtk::AccelLabel::builder()
             .label(to_gtk_mnemonic(&args.text))

@@ -8,8 +8,8 @@ use windows_sys::{
     Win32::{
         Foundation::{FARPROC, HWND, S_OK},
         Graphics::Gdi::{
-            DeleteObject, GetDC, GetDeviceCaps, MonitorFromWindow, HBITMAP, HMONITOR, LOGPIXELSX,
-            MONITOR_DEFAULTTONEAREST,
+            DeleteObject, GetDC, GetDeviceCaps, MonitorFromWindow, ReleaseDC, HBITMAP, HMONITOR,
+            LOGPIXELSX, MONITOR_DEFAULTTONEAREST,
         },
         System::LibraryLoader::{GetProcAddress, LoadLibraryW},
         UI::{
@@ -132,6 +132,7 @@ macro_rules! get_function {
 }
 
 pub type GetDpiForWindow = unsafe extern "system" fn(hwnd: HWND) -> u32;
+pub type GetDpiForSystem = unsafe extern "system" fn() -> u32;
 pub type GetDpiForMonitor = unsafe extern "system" fn(
     hmonitor: HMONITOR,
     dpi_type: MONITOR_DPI_TYPE,
@@ -141,12 +142,38 @@ pub type GetDpiForMonitor = unsafe extern "system" fn(
 
 static GET_DPI_FOR_WINDOW: Lazy<Option<GetDpiForWindow>> =
     Lazy::new(|| get_function!("user32.dll", GetDpiForWindow));
+static GET_DPI_FOR_SYSTEM: Lazy<Option<GetDpiForSystem>> =
+    Lazy::new(|| get_function!("user32.dll", GetDpiForSystem));
 static GET_DPI_FOR_MONITOR: Lazy<Option<GetDpiForMonitor>> =
     Lazy::new(|| get_function!("shcore.dll", GetDpiForMonitor));
 
 pub const BASE_DPI: u32 = 96;
 pub fn dpi_to_scale_factor(dpi: u32) -> f64 {
     dpi as f64 / BASE_DPI as f64
+}
+
+/// The DPI of the primary display at the time the process started, for when no window is known.
+#[allow(non_snake_case)]
+pub unsafe fn system_dpi() -> u32 {
+    if let Some(GetDpiForSystem) = *GET_DPI_FOR_SYSTEM {
+        // We are on Windows 10 Anniversary Update (1607) or later.
+        return match GetDpiForSystem() {
+            0 => BASE_DPI,
+            dpi => dpi,
+        };
+    }
+
+    let hdc = GetDC(std::ptr::null_mut());
+    if hdc.is_null() {
+        return BASE_DPI;
+    }
+    let dpi = GetDeviceCaps(hdc, LOGPIXELSX as _);
+    ReleaseDC(std::ptr::null_mut(), hdc);
+    if dpi > 0 {
+        dpi as u32
+    } else {
+        BASE_DPI
+    }
 }
 
 #[allow(non_snake_case)]
