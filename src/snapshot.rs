@@ -242,6 +242,11 @@ impl CheckMenuItemSnapshot {
     pub fn is_checked(&self) -> bool {
         self.state.borrow().checked
     }
+
+    /// Returns the check menu item's icon.
+    pub fn icon(&self) -> Option<SnapshotIcon> {
+        self.state.borrow().icon.as_ref().and_then(Into::into)
+    }
 }
 
 impl IconMenuItemSnapshot {

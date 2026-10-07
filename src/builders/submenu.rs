@@ -14,6 +14,7 @@ pub struct SubmenuBuilder<'a> {
     icon: Option<Icon>,
     native_icon: Option<NativeIcon>,
     styled_text: Option<Vec<(String, TextStyle)>>,
+    icon_size: Option<u32>,
 }
 
 impl Default for SubmenuBuilder<'_> {
@@ -26,6 +27,7 @@ impl Default for SubmenuBuilder<'_> {
             icon: None,
             native_icon: None,
             styled_text: None,
+            icon_size: None,
         }
     }
 }
@@ -111,6 +113,14 @@ impl<'a> SubmenuBuilder<'a> {
         self
     }
 
+    /// Set the logical size, in pixels, at which this submenu's icon is drawn.
+    ///
+    /// See [`Submenu::set_icon_size`] for more info.
+    pub fn icon_size(mut self, size: Option<u32>) -> Self {
+        self.icon_size = size;
+        self
+    }
+
     /// Set the text for this menu item as a sequence of styled text, so one part of the
     /// label can be de-emphasized relative to the rest.
     ///
@@ -137,6 +147,11 @@ impl<'a> SubmenuBuilder<'a> {
         } else {
             Submenu::with_items(self.text, self.enabled, &self.items)?
         };
+
+        // The size goes first so the icon is only drawn once.
+        if self.icon_size.is_some() {
+            submenu.set_icon_size(self.icon_size);
+        }
 
         if let Some(icon) = self.icon {
             submenu.set_icon(Some(icon));

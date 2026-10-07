@@ -368,7 +368,7 @@ impl PlatformMenuItem {
     }
 }
 
-/// IconMenuItem methods
+/// Icon methods, shared by icon menu items, check menu items and submenus
 impl PlatformMenuItem {
     pub fn set_icon(&mut self, icon: Option<&IconType>) {
         for ns_items in self.ns_menu_items.values() {
@@ -775,6 +775,7 @@ impl PlatformMenuItem {
             if args.checked {
                 ns_menu_item.setState(NSControlStateValueOn);
             }
+            menuitem_set_icon_type(&ns_menu_item, args.icon.as_ref());
         }
 
         ns_menu_item.ivars().replace(Some(owner));

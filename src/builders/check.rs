@@ -4,6 +4,7 @@
 
 use crate::{
     accelerator::{Accelerator, KeyAccelerator, MenuAccelerator},
+    icon::{Icon, NativeIcon},
     CheckMenuItem, MenuId, TextStyle,
 };
 
@@ -16,6 +17,9 @@ pub struct CheckMenuItemBuilder {
     accelerator: Option<MenuAccelerator>,
     id: Option<MenuId>,
     styled_text: Option<Vec<(String, TextStyle)>>,
+    icon: Option<Icon>,
+    native_icon: Option<NativeIcon>,
+    icon_size: Option<u32>,
 }
 
 impl Default for CheckMenuItemBuilder {
@@ -27,6 +31,9 @@ impl Default for CheckMenuItemBuilder {
             accelerator: None,
             id: None,
             styled_text: None,
+            icon: None,
+            native_icon: None,
+            icon_size: None,
         }
     }
 }
@@ -59,6 +66,36 @@ impl CheckMenuItemBuilder {
     /// Check or uncheck this menu item.
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = checked;
+        self
+    }
+
+    /// Set this check menu item icon.
+    ///
+    /// See [`CheckMenuItem::set_icon`] for more info.
+    ///
+    /// (Note that setting an icon will override any existing [.native_icon()](Self::native_icon))
+    pub fn icon(mut self, icon: Option<Icon>) -> Self {
+        self.icon = icon;
+        self.native_icon = None;
+        self
+    }
+
+    /// Set this check menu item native icon.
+    ///
+    /// See [`CheckMenuItem::set_native_icon`] for more info.
+    ///
+    /// (Note that setting a native icon will override any existing [.icon()](Self::icon))
+    pub fn native_icon(mut self, icon: Option<NativeIcon>) -> Self {
+        self.native_icon = icon;
+        self.icon = None;
+        self
+    }
+
+    /// Set the logical size, in pixels, at which this check menu item's icon is drawn.
+    ///
+    /// See [`CheckMenuItem::set_icon_size`] for more info.
+    pub fn icon_size(mut self, size: Option<u32>) -> Self {
+        self.icon_size = size;
         self
     }
 
@@ -132,6 +169,17 @@ impl CheckMenuItemBuilder {
 
         if let Some(parts) = self.styled_text {
             item.set_styled_text(parts);
+        }
+
+        // The size goes first so the icon is only drawn once.
+        if self.icon_size.is_some() {
+            item.set_icon_size(self.icon_size);
+        }
+
+        if self.icon.is_some() {
+            item.set_icon(self.icon);
+        } else if self.native_icon.is_some() {
+            item.set_native_icon(self.native_icon);
         }
 
         item

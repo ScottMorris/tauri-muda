@@ -447,6 +447,11 @@ impl PlatformMenuItem {
         for items in self.gtk_menu_items.borrow().values() {
             for i in items {
                 i.set_label(&text);
+                // `set_label` only reaches a label that is the item's direct child, not one
+                // inside the box that holds an icon.
+                if let Some(label) = Self::item_label_in_box(i) {
+                    label.set_label(&text);
+                }
             }
         }
     }
@@ -639,12 +644,47 @@ impl PlatformMenuItem {
         }
     }
 
+    /// The box holding an item's icon and label, which is the item's child for icon items and
+    /// submenus, and for the other items once an icon has been set.
+    fn icon_box(item: &gtk::MenuItem) -> Option<gtk::Box> {
+        item.child()?.downcast::<gtk::Box>().ok()
+    }
+
+    /// The label of an item whose child is an icon box.
+    fn item_label_in_box(item: &gtk::MenuItem) -> Option<gtk::Label> {
+        Self::icon_box(item)?
+            .children()
+            .into_iter()
+            .find_map(|child| child.downcast::<gtk::Label>().ok())
+    }
+
+    /// Moves the label of an item that has none of its own icon room, such as a check item, into
+    /// a box so an image can be put before it. The item keeps its own indicator, which GTK draws
+    /// before the box, and its label keeps showing the item's accelerator.
+    fn wrap_label_in_icon_box(item: &gtk::MenuItem) -> Option<gtk::Box> {
+        let label = item.child()?.downcast::<gtk::Label>().ok()?;
+        item.remove(&label);
+
+        let box_container = gtk::Box::new(Orientation::Horizontal, 6);
+        box_container.pack_start(&label, true, true, 0);
+        item.add(&box_container);
+        box_container.show();
+        Some(box_container)
+    }
+
     pub fn set_icon(&mut self, icon: Option<&IconType>) {
         let size = self.icon_size;
 
         for items in self.gtk_menu_items.borrow().values() {
             for i in items {
-                let box_container = i.child().unwrap().downcast::<gtk::Box>().unwrap();
+                let box_container = match Self::icon_box(i) {
+                    Some(box_container) => box_container,
+                    None if icon.is_some() => match Self::wrap_label_in_icon_box(i) {
+                        Some(box_container) => box_container,
+                        None => continue,
+                    },
+                    None => continue,
+                };
                 let children = box_container.children();
 
                 // Check if the first child is an image (it might not be if the item
@@ -674,7 +714,9 @@ impl PlatformMenuItem {
 
         for items in self.gtk_menu_items.borrow().values() {
             for i in items {
-                let box_container = i.child().unwrap().downcast::<gtk::Box>().unwrap();
+                let Some(box_container) = Self::icon_box(i) else {
+                    continue;
+                };
                 let children = box_container.children();
 
                 if let Some(image) = children
@@ -1045,6 +1087,17 @@ impl PlatformMenuItem {
 
         self.register_accelerator(args, &item, menu_id, accel_group, add_to_cache)?;
 
+        // A check item without an icon keeps its plain label; one with an icon puts the image
+        // between GTK's check indicator and the label.
+        if args.icon.is_some() {
+            if let Some(box_container) = Self::wrap_label_in_icon_box(item.upcast_ref()) {
+                let image = Self::new_icon_image(args.icon.as_ref(), args.icon_size);
+                box_container.pack_start(&image, false, false, 0);
+                box_container.reorder_child(&image, 0);
+                image.show();
+            }
+        }
+
         let (id, state) = match click {
             MenuItemAction::Toggle(id, state) => (id.clone(), state.clone()),
             _ => unreachable!("check item without toggle action"),
@@ -1355,5 +1408,108 @@ fn show_about_dialog(metadata: &crate::AboutMetadata) {
     about.run();
     unsafe {
         about.destroy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gtk::prelude::*;
+
+    use crate::{CheckMenuItem, ContextMenu, Icon, Menu, Submenu};
+
+    fn icon() -> Icon {
+        Icon::from_rgba(vec![255; 16 * 16 * 4], 16, 16).unwrap()
+    }
+
+    fn width(image: gtk::Image) -> i32 {
+        image.preferred_size().0.width
+    }
+
+    /// The image and label of an item that holds them in a box.
+    fn image_and_label(item: &gtk::Widget) -> (Option<gtk::Image>, gtk::Label) {
+        let item = item.downcast_ref::<gtk::MenuItem>().unwrap();
+        let children = item
+            .child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap()
+            .children();
+        let image = children
+            .iter()
+            .find_map(|child| child.clone().downcast::<gtk::Image>().ok());
+        let label = children
+            .iter()
+            .find_map(|child| child.clone().downcast::<gtk::Label>().ok())
+            .unwrap();
+        (image, label)
+    }
+
+    // GTK can only be used from one thread, so everything that needs it is in this one test, and
+    // it is skipped when there is no display to initialise GTK on (`xvfb-run` provides one).
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn check_items_and_submenus_draw_icons_without_losing_their_behaviour() {
+        if gtk::init().is_err() {
+            return;
+        }
+
+        let checked = CheckMenuItem::new("Checked", true, true, None);
+        checked.set_icon(Some(icon()));
+        let plain = CheckMenuItem::new("Plain", true, false, None);
+        let submenu = Submenu::new("Sub", true);
+        submenu.set_icon(Some(icon()));
+        submenu.set_icon_size(Some(20));
+
+        let menu = Menu::new();
+        menu.append_items(&[&checked, &plain, &submenu]).unwrap();
+        let children = menu.gtk_context_menu().children();
+
+        // A check item with an icon keeps its indicator and its state, and gains an image.
+        let gtk_checked = children[0].downcast_ref::<gtk::CheckMenuItem>().unwrap();
+        assert!(gtk_checked.is_active());
+        let (image, label) = image_and_label(&children[0]);
+        assert_eq!(label.text(), "Checked");
+        assert_eq!(width(image.unwrap()), 16);
+
+        // One without an icon is untouched: its child is still its label.
+        let gtk_plain = children[1].downcast_ref::<gtk::MenuItem>().unwrap();
+        assert!(gtk_plain.child().unwrap().is::<gtk::Label>());
+
+        // A submenu keeps its arrow (it still has a submenu) and draws its icon at its size.
+        let gtk_sub = children[2].downcast_ref::<gtk::MenuItem>().unwrap();
+        assert!(gtk_sub.submenu().is_some());
+        let (image, label) = image_and_label(&children[2]);
+        assert_eq!(label.text(), "Sub");
+        assert_eq!(width(image.unwrap()), 20);
+
+        // Text, the enabled state and the checked state keep working with the extra widget.
+        checked.set_text("Renamed");
+        assert_eq!(checked.text(), "Renamed");
+        assert_eq!(image_and_label(&children[0]).1.text(), "Renamed");
+        submenu.set_text("Renamed too");
+        assert_eq!(image_and_label(&children[2]).1.text(), "Renamed too");
+        checked.set_enabled(false);
+        assert!(!gtk_checked.is_sensitive());
+        checked.set_enabled(true);
+        checked.set_checked(false);
+        assert!(!gtk_checked.is_active());
+        assert!(!checked.is_checked());
+
+        // Icons can be resized, removed and put back, and added to an item that had none.
+        checked.set_icon_size(Some(24));
+        assert_eq!(width(image_and_label(&children[0]).0.unwrap()), 24);
+        checked.set_icon(None);
+        assert!(image_and_label(&children[0]).0.is_none());
+        checked.set_icon(Some(icon()));
+        assert!(image_and_label(&children[0]).0.is_some());
+        plain.set_icon(Some(icon()));
+        let (image, label) = image_and_label(&children[1]);
+        assert!(image.is_some());
+        assert_eq!(label.text(), "Plain");
+        plain.set_icon_size(Some(32));
+        plain.set_native_icon(Some(crate::NativeIcon::Folder));
+        assert!(image_and_label(&children[1]).0.is_some());
+        plain.set_checked(true);
+        assert!(plain.is_checked());
     }
 }

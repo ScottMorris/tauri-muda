@@ -6,9 +6,10 @@ use std::{cell::RefCell, mem, rc::Rc, sync::Arc};
 
 use crate::{
     accelerator::{Accelerator, KeyAccelerator, MenuAccelerator},
+    icon::{Icon, NativeIcon},
     platform_impl::PlatformMenuItem,
-    util, CheckMenuItemBuilder, IsMenuItem, MenuId, MenuItemAction, MenuItemKind, StateCell,
-    TextStyle,
+    util, CheckMenuItemBuilder, IconType, IsMenuItem, MenuId, MenuItemAction, MenuItemKind,
+    StateCell, TextStyle,
 };
 
 /// A check menu item inside a [`Menu`] or [`Submenu`]
@@ -32,6 +33,8 @@ pub(crate) struct CheckMenuItemState {
     pub checked: bool,
     pub accelerator: Option<MenuAccelerator>,
     pub styled_text: Option<Vec<(String, TextStyle)>>,
+    pub icon: Option<IconType>,
+    pub icon_size: Option<u32>,
 }
 
 impl crate::sealed::Sealed for CheckMenuItem {}
@@ -108,6 +111,8 @@ impl CheckMenuItem {
             checked,
             accelerator,
             styled_text: None,
+            icon: None,
+            icon_size: None,
         });
         // The click path flips `checked` through this handle rather than through the wrapper,
         // which it has no way to reach. It is weak so that state does not own the platform that
@@ -214,6 +219,80 @@ impl CheckMenuItem {
     pub fn set_checked(&self, checked: bool) {
         self.state.borrow_mut().checked = checked;
         self.platform.borrow_mut().set_checked(checked)
+    }
+
+    /// Change this check menu item's icon or remove it.
+    ///
+    /// ## Platform-specific
+    ///
+    /// - **Windows**: The icon is drawn in the item's bitmap slot, which is also where the system
+    ///   draws the checked state: a checked item with a bitmap is shown with its bitmap framed
+    ///   rather than with a separate check mark. Whether an item is checked is not affected.
+    /// - **GTK 3**: The icon is drawn between the check indicator and the text.
+    /// - **macOS**: The icon is drawn next to the text, after the check mark.
+    /// - **GTK 4**: Unsupported.
+    ///
+    /// (Note that setting an icon will override any existing [.set_native_icon()](Self::set_native_icon))
+    pub fn set_icon(&self, icon: Option<Icon>) {
+        let icon = {
+            let mut state = self.state.borrow_mut();
+            state.icon = icon.map(IconType::Custom);
+            state.icon.clone()
+        };
+        self.platform.borrow_mut().set_icon(icon.as_ref())
+    }
+
+    /// Change this check menu item's icon to a native image or remove it.
+    ///
+    /// See [`CheckMenuItem::set_icon`] for how an icon is drawn next to the checked state.
+    ///
+    /// ## Platform-specific
+    ///
+    /// - **macOS**: Known variants map to AppKit image names. Use [`NativeIcon::Raw`] or
+    ///   `NativeIcon::from_name` to pass an AppKit [`NSImage.Name`] string.
+    /// - **Windows**: Known variants map to stock shell icons where an equivalent exists. Use
+    ///   [`NativeIcon::Raw`] or `NativeIcon::from_id` to pass a raw [`SHSTOCKICONID`] value.
+    /// - **GTK 3**: Known variants map to freedesktop-style icon theme names. Use
+    ///   [`NativeIcon::Raw`] or `NativeIcon::from_name` to pass an icon theme name resolved by
+    ///   [`GtkIconTheme`].
+    /// - **GTK 4**: Unsupported.
+    ///
+    /// [`NSImage.Name`]: https://developer.apple.com/documentation/appkit/nsimage/name-swift.typealias
+    /// [`SHSTOCKICONID`]: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-shstockiconid
+    /// [`GtkIconTheme`]: https://docs.gtk.org/gtk3/class.IconTheme.html
+    ///
+    /// (Note that setting a native icon will override any existing [.set_icon()](Self::set_icon))
+    pub fn set_native_icon(&self, icon: Option<NativeIcon>) {
+        let icon = {
+            let mut state = self.state.borrow_mut();
+            state.icon = icon.map(IconType::Native);
+            state.icon.clone()
+        };
+        self.platform.borrow_mut().set_icon(icon.as_ref())
+    }
+
+    /// Get the logical size, in pixels, this item's icon is drawn at, if one was set with
+    /// [`set_icon_size`](Self::set_icon_size).
+    pub fn icon_size(&self) -> Option<u32> {
+        self.state.borrow().icon_size
+    }
+
+    /// Set the logical size, in pixels, at which this item's icon is drawn in a menu, or `None`
+    /// to use the crate-wide default ([`set_default_menu_icon_size`](crate::set_default_menu_icon_size))
+    /// and then the platform default.
+    ///
+    /// See [`IconMenuItem::set_icon_size`](crate::IconMenuItem::set_icon_size) for how sizes are
+    /// normalised and for the platform-specific behaviour.
+    pub fn set_icon_size(&self, size: Option<u32>) {
+        let size = crate::menu_icon::normalize_icon_size(size);
+        let icon = {
+            let mut state = self.state.borrow_mut();
+            state.icon_size = size;
+            state.icon.clone()
+        };
+        self.platform
+            .borrow_mut()
+            .set_icon_size(size, icon.as_ref())
     }
 
     /// Convert this menu item into its menu ID.

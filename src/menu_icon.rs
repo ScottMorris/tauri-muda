@@ -18,7 +18,8 @@ const MAX_ICON_SIZE: u32 = 256;
 static DEFAULT_ICON_SIZE: AtomicU32 = AtomicU32::new(0);
 
 /// Sets the logical size, in pixels, at which menu icons are drawn when an item does not set its
-/// own with [`IconMenuItemBuilder::icon_size`] or [`IconMenuItem::set_icon_size`].
+/// own with [`IconMenuItemBuilder::icon_size`] or [`IconMenuItem::set_icon_size`] (or the
+/// equivalents on [`CheckMenuItem`] and [`Submenu`]).
 ///
 /// Pass `None` to restore the platform default (the default). The value is read when an item is
 /// attached to a menu, so call this before building menus.
@@ -31,6 +32,8 @@ static DEFAULT_ICON_SIZE: AtomicU32 = AtomicU32::new(0);
 ///
 /// [`IconMenuItemBuilder::icon_size`]: crate::IconMenuItemBuilder::icon_size
 /// [`IconMenuItem::set_icon_size`]: crate::IconMenuItem::set_icon_size
+/// [`CheckMenuItem`]: crate::CheckMenuItem
+/// [`Submenu`]: crate::Submenu
 pub fn set_default_menu_icon_size(size: Option<u32>) {
     DEFAULT_ICON_SIZE.store(normalize_icon_size(size).unwrap_or(0), Ordering::Relaxed);
 }

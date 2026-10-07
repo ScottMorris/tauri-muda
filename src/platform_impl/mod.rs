@@ -118,7 +118,7 @@ impl MenuItemKind {
                     checked: false,
                     accelerator: None,
                     icon: state.icon.clone(),
-                    icon_size: None,
+                    icon_size: state.icon_size,
                     #[cfg(target_os = "macos")]
                     styled_text: state.styled_text.clone(),
                 }
@@ -143,8 +143,8 @@ impl MenuItemKind {
                     enabled: state.enabled,
                     checked: state.checked,
                     accelerator: state.accelerator.clone(),
-                    icon: None,
-                    icon_size: None,
+                    icon: state.icon.clone(),
+                    icon_size: state.icon_size,
                     #[cfg(target_os = "macos")]
                     styled_text: state.styled_text.clone(),
                 }

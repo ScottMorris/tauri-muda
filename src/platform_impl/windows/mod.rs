@@ -1011,6 +1011,15 @@ unsafe fn show_context_menu(hwnd: HWND, hmenu: HMENU, position: Option<Position>
     (result > 0).then_some(result.try_into().ok()).flatten()
 }
 
+/// Builds the info that sets (or, with `None`, clears) an item's bitmap, for icon items, check
+/// items and submenus alike.
+///
+/// Only `MIIM_BITMAP` is set, so applying it leaves the item's state, text and submenu alone and
+/// a check item stays `MFS_CHECKED` or not, whatever its bitmap. How a checked item with a bitmap
+/// is drawn is up to the system: themed menus show the checked state as a frame around the
+/// bitmap in the item's icon column, in place of the separate check mark an item without a
+/// bitmap gets. That is the behaviour of the Windows menus themselves and was not observed from
+/// here; muda's own check bookkeeping reads `MFS_CHECKED` and does not depend on it.
 fn create_icon_item_info(hbitmap: Option<HBITMAP>) -> MENUITEMINFOW {
     let mut info: MENUITEMINFOW = unsafe { std::mem::zeroed() };
     info.cbSize = std::mem::size_of::<MENUITEMINFOW>() as _;

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-//! Right-click the window to open a context menu showing the same icon at several sizes. On
-//! GTK 3 the menu is also themed with application CSS.
+//! Right-click the window to open a context menu showing the same icon at several sizes, on icon
+//! menu items, a check menu item and a submenu. On GTK 3 the menu is also themed with application
+//! CSS.
 
 #![allow(unused)]
 
-use muda::{ContextMenu, IconMenuItem, Menu, MenuEvent, MenuItem};
+use muda::{CheckMenuItem, ContextMenu, IconMenuItem, Menu, MenuEvent, MenuItem, Submenu};
 #[cfg(all(
     feature = "gtk3",
     any(
@@ -78,6 +79,19 @@ fn main() {
             .icon(Some(icon.clone()))
             .icon_size(Some(24))
             .build(),
+        &CheckMenuItem::builder()
+            .text("Checked, 24 pixels")
+            .checked(true)
+            .icon(Some(icon.clone()))
+            .icon_size(Some(24))
+            .build(),
+        &Submenu::builder()
+            .text("Submenu, 24 pixels")
+            .icon(icon.clone())
+            .icon_size(Some(24))
+            .item(&MenuItem::new("Inside", true, None))
+            .build()
+            .unwrap(),
         &MenuItem::new("No icon", true, None),
     ])
     .unwrap();

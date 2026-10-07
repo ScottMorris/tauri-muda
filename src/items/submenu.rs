@@ -47,6 +47,7 @@ pub(crate) struct SubmenuState {
     pub text: String,
     pub enabled: bool,
     pub icon: Option<IconType>,
+    pub icon_size: Option<u32>,
     pub children: Vec<UnsafeMenuItemKind>,
     pub styled_text: Option<Vec<(String, TextStyle)>>,
 }
@@ -128,6 +129,7 @@ impl Submenu {
             text: text.to_string(),
             enabled,
             icon: None,
+            icon_size: None,
             children: Vec::new(),
             styled_text: None,
         };
@@ -423,6 +425,30 @@ impl Submenu {
             state.icon.clone()
         };
         self.platform.borrow_mut().set_icon(icon.as_ref())
+    }
+
+    /// Get the logical size, in pixels, this submenu's icon is drawn at, if one was set with
+    /// [`set_icon_size`](Self::set_icon_size).
+    pub fn icon_size(&self) -> Option<u32> {
+        self.state.borrow().icon_size
+    }
+
+    /// Set the logical size, in pixels, at which this submenu's icon is drawn in a menu, or `None`
+    /// to use the crate-wide default ([`set_default_menu_icon_size`](crate::set_default_menu_icon_size))
+    /// and then the platform default.
+    ///
+    /// See [`IconMenuItem::set_icon_size`](crate::IconMenuItem::set_icon_size) for how sizes are
+    /// normalised and for the platform-specific behaviour.
+    pub fn set_icon_size(&self, size: Option<u32>) {
+        let size = crate::menu_icon::normalize_icon_size(size);
+        let icon = {
+            let mut state = self.state.borrow_mut();
+            state.icon_size = size;
+            state.icon.clone()
+        };
+        self.platform
+            .borrow_mut()
+            .set_icon_size(size, icon.as_ref())
     }
 }
 

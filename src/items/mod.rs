@@ -260,7 +260,14 @@ pub(crate) enum MenuItemAction {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CheckMenuItem, IconMenuItem, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+    use crate::{
+        CheckMenuItem, Icon, IconMenuItem, IconType, MenuId, MenuItem, NativeIcon,
+        PredefinedMenuItem, Submenu,
+    };
+
+    fn icon() -> Icon {
+        Icon::from_rgba(vec![255; 4 * 4 * 4], 4, 4).unwrap()
+    }
 
     #[test]
     #[cfg_attr(
@@ -326,5 +333,142 @@ mod tests {
 
         let item = PredefinedMenuItem::separator();
         assert_eq!(item.id().clone(), item.into_id());
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(
+            miri,
+            not(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))
+        ),
+        ignore
+    )]
+    fn check_item_icon_can_be_set_replaced_and_cleared() {
+        let item = CheckMenuItem::new("test", true, true, None);
+        assert!(item.state.borrow().icon.is_none());
+
+        item.set_icon(Some(icon()));
+        assert!(matches!(
+            item.state.borrow().icon,
+            Some(IconType::Custom(_))
+        ));
+
+        item.set_native_icon(Some(NativeIcon::Folder));
+        assert!(matches!(
+            item.state.borrow().icon,
+            Some(IconType::Native(_))
+        ));
+
+        item.set_icon(Some(icon()));
+        assert!(matches!(
+            item.state.borrow().icon,
+            Some(IconType::Custom(_))
+        ));
+
+        item.set_icon(None);
+        assert!(item.state.borrow().icon.is_none());
+
+        // Changing the icon leaves the check state alone.
+        assert!(item.is_checked());
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(
+            miri,
+            not(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))
+        ),
+        ignore
+    )]
+    fn check_item_and_submenu_icon_size_is_normalised() {
+        let check = CheckMenuItem::new("test", true, false, None);
+        let submenu = Submenu::new("test", true);
+        assert_eq!((check.icon_size(), submenu.icon_size()), (None, None));
+
+        check.set_icon_size(Some(24));
+        submenu.set_icon_size(Some(24));
+        assert_eq!(
+            (check.icon_size(), submenu.icon_size()),
+            (Some(24), Some(24))
+        );
+
+        check.set_icon_size(Some(0));
+        submenu.set_icon_size(Some(10_000));
+        assert_eq!((check.icon_size(), submenu.icon_size()), (None, Some(256)));
+
+        check.set_icon_size(None);
+        submenu.set_icon_size(None);
+        assert_eq!((check.icon_size(), submenu.icon_size()), (None, None));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(
+            miri,
+            not(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))
+        ),
+        ignore
+    )]
+    fn builders_set_the_icon_and_its_size() {
+        let check = CheckMenuItem::builder()
+            .text("test")
+            .checked(true)
+            .icon(Some(icon()))
+            .icon_size(Some(20))
+            .build();
+        assert!(matches!(
+            check.state.borrow().icon,
+            Some(IconType::Custom(_))
+        ));
+        assert_eq!(check.icon_size(), Some(20));
+        assert!(check.is_checked());
+
+        // The last of `icon` and `native_icon` wins.
+        let check = CheckMenuItem::builder()
+            .icon(Some(icon()))
+            .native_icon(Some(NativeIcon::Folder))
+            .build();
+        assert!(matches!(
+            check.state.borrow().icon,
+            Some(IconType::Native(_))
+        ));
+        let check = CheckMenuItem::builder()
+            .native_icon(Some(NativeIcon::Folder))
+            .icon(Some(icon()))
+            .build();
+        assert!(matches!(
+            check.state.borrow().icon,
+            Some(IconType::Custom(_))
+        ));
+
+        let submenu = Submenu::builder()
+            .text("test")
+            .icon(icon())
+            .icon_size(Some(20))
+            .build()
+            .unwrap();
+        assert!(matches!(
+            submenu.state.borrow().icon,
+            Some(IconType::Custom(_))
+        ));
+        assert_eq!(submenu.icon_size(), Some(20));
     }
 }
